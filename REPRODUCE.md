@@ -46,5 +46,7 @@ Re-scored 8 sequences sampled from the 15,151 unique cleaned sequences in
   change. On WSL2 kernels built with `NONE`, add `vsyscall=emulate` via `.wslconfig`
   (see `PFRED/`'s notebook notes), or the python2/R binaries segfault (exit 139).
 - The bare image re-downloads the 3.85 GB deps on each fresh run (from the fork release).
-  For a fully self-contained artifact, `docker commit` the initialized container and
-  archive that image instead.
+  The fully self-contained artifact is the `docker commit` of the initialized container,
+  archived on GHCR by digest:
+  `ghcr.io/redpenguin100/pfred@sha256:738012805a446453fc1bd06bf3b63f4e0f9197a0f8d8f2919a2396545c0cfdd8`
+  (`docker pull` it to run offline). Built from PFRED-fork @ 11a9b39.

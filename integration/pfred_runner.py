@@ -6,8 +6,11 @@ per sequence. No dependency on the ``tauso`` package — the only thing that use
 couple it (the ``"Sequence"`` column name) is now the ``seq_col`` parameter.
 
 Requires:
-  - Docker, with the PFRED-fork image built/pulled and a container running
-    (default name ``pfred``). See ../PFRED for the Dockerfile and build steps.
+  - Docker, with a PFRED container running (default name ``pfred``). Quickest way to get
+    one is to pull the pinned, fully-initialized image (see ``GHCR_IMAGE`` below):
+        docker pull <GHCR_IMAGE> && docker tag <GHCR_IMAGE> tauso/pfred:v1
+        docker run -d -t --name pfred tauso/pfred:v1
+    Or build from ../PFRED (the Dockerfile). See ../REPRODUCE.md.
 """
 
 import os
@@ -17,6 +20,10 @@ import subprocess
 import pandas as pd
 
 DEFAULT_SEQ_COL = "Sequence"
+
+# Pinned, fully-initialized PFRED image (deps baked in; built from PFRED-fork @ 11a9b39).
+# Verified to reproduce PFRED_SVM/PFRED_PLS exactly — see ../REPRODUCE.md.
+GHCR_IMAGE = "ghcr.io/redpenguin100/pfred@sha256:738012805a446453fc1bd06bf3b63f4e0f9197a0f8d8f2919a2396545c0cfdd8"
 
 
 def validate_docker_container(

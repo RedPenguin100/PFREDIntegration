@@ -32,10 +32,13 @@ PFREDIntegration/
 git clone --recurse-submodules https://github.com/RedPenguin100/PFREDIntegration.git
 cd PFREDIntegration
 
-# 1. Build the image (or pull a pinned digest — see Reproducibility note)
-docker build -t tauso/pfred:v1 PFRED/
+# 1a. Fast path — pull the pinned, fully-initialized image (deps baked in, runs offline):
+docker pull ghcr.io/redpenguin100/pfred@sha256:738012805a446453fc1bd06bf3b63f4e0f9197a0f8d8f2919a2396545c0cfdd8
+docker tag  ghcr.io/redpenguin100/pfred@sha256:738012805a446453fc1bd06bf3b63f4e0f9197a0f8d8f2919a2396545c0cfdd8 tauso/pfred:v1
+# 1b. ...or build from the fork instead (first run then downloads 3.85 GB of deps, ~10 min):
+#     docker build -t tauso/pfred:v1 PFRED/
 
-# 2. Start a container named "pfred" (first run downloads deps via entrypoint, ~10 min)
+# 2. Start a container named "pfred"
 docker run -d -t --name pfred tauso/pfred:v1
 
 # 3. Smoke test the runner
@@ -46,8 +49,14 @@ python integration/pfred_runner.py
 
 A from-scratch `docker build` still pulls from external mirrors (the SL6 obsolete vault,
 CRAN archive, SourceForge), so it can rot. The robust artifact is the **already-built,
-initialized image** — push it to a registry by **digest** and pull that instead of
-rebuilding. *(TODO: publish `ghcr.io/redpenguin100/pfred@sha256:…` and pin it here.)*
+initialized image**, archived by immutable digest on GHCR:
+
+```
+ghcr.io/redpenguin100/pfred@sha256:738012805a446453fc1bd06bf3b63f4e0f9197a0f8d8f2919a2396545c0cfdd8
+```
+
+`docker pull` that to run offline — deps are baked in (no rebuild, no dependency on the
+fork release). Verified to reproduce `PFRED_SVM`/`PFRED_PLS` exactly (see `REPRODUCE.md`).
 
 Large outputs (the full scored TAUSO table) go to **Zenodo**; only small results are
 committed under `integration/results/`.
