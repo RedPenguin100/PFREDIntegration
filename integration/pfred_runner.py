@@ -16,6 +16,7 @@ Requires:
 import os
 import re
 import subprocess
+from dataclasses import dataclass
 
 import pandas as pd
 
@@ -24,6 +25,26 @@ DEFAULT_SEQ_COL = "Sequence"
 # Pinned, fully-initialized PFRED image (deps baked in; built from PFRED-fork @ 11a9b39).
 # Verified to reproduce PFRED_SVM/PFRED_PLS exactly — see ../REPRODUCE.md.
 GHCR_IMAGE = "ghcr.io/redpenguin100/pfred@sha256:738012805a446453fc1bd06bf3b63f4e0f9197a0f8d8f2919a2396545c0cfdd8"
+
+
+@dataclass(frozen=True)
+class AOBaseModel:
+    """The PFRED predictor configuration (the "AOBase" model and its prompt params).
+
+    PFRED's ``antisense_predictor.py`` is driven positionally plus interactive stdin:
+        antisense_predictor.py <name> <model_csv> <objective> predict <input.csv>
+    answering the prompts with ``params``. The defaults reproduce the original
+    AOBase SVM/PLS run; override any field to swap models or sweep parameters.
+    """
+
+    name: str = "AOBase"
+    model_csv: str = "/home/pfred/scripts/pfred/AOBase_542seq_cleaned_modelBuilding_Jan2009_15_21_noOutliers.csv"
+    objective: str = "c_a_thermo"
+    # answers fed to the predictor's prompts: min len, max len, then 3 search params.
+    params: tuple = (15, 21, 100, 1000, 12)
+
+
+DEFAULT_MODEL = AOBaseModel()
 
 
 def validate_docker_container(
@@ -73,8 +94,8 @@ def validate_docker_container(
         return False
 
 
-def score_with_pfred_batch(input_df, container_name="pfred", temp_dir="./pfred_temp_io"):
-    """Runs PFRED on a batch of unique sequences via Docker."""
+def score_with_pfred_batch(input_df, container_name="pfred", temp_dir="./pfred_temp_io", model=DEFAULT_MODEL):
+    """Runs PFRED on a batch of unique sequences via Docker, using ``model`` (AOBaseModel)."""
     if input_df.empty:
         return pd.DataFrame()
 
@@ -95,19 +116,20 @@ def score_with_pfred_batch(input_df, container_name="pfred", temp_dir="./pfred_t
         subprocess.run(["docker", "exec", container_name, "mkdir", "-p", remote_dir], check=False)
         subprocess.run(["docker", "cp", local_in, f"{container_name}:{remote_dir}/{remote_in}"], check=True)
 
+        params_block = "\n".join(str(p) for p in model.params)
         cmd = f"""
         cd {remote_dir}
         tr -d '\r' < {remote_in} > {remote_in}.tmp && mv {remote_in}.tmp {remote_in}
-        echo -e "15\n21\n100\n1000\n12" > input_params.txt
+        echo -e "{params_block}" > input_params.txt
 
         export PATH=/home/pfred/bin/R2.6.0/bin:$PATH
         export R_HOME=/home/pfred/bin/R2.6.0/lib64/R
         export PYTHONPATH=/usr/lib64/python2.6/site-packages:$PYTHONPATH
 
         python2 /home/pfred/scripts/pfred/antisense_predictor.py \
-            AOBase \
-            /home/pfred/scripts/pfred/AOBase_542seq_cleaned_modelBuilding_Jan2009_15_21_noOutliers.csv \
-            c_a_thermo \
+            {model.name} \
+            {model.model_csv} \
+            {model.objective} \
             predict \
             ./{remote_in} \
             < input_params.txt > run.log 2>&1
@@ -135,10 +157,13 @@ def score_with_pfred_batch(input_df, container_name="pfred", temp_dir="./pfred_t
         return pd.DataFrame()
 
 
-def populate_pfred(data, seq_col=DEFAULT_SEQ_COL, container_name="pfred", temp_dir="./pfred_temp_io", chunk_size=5000):
+def populate_pfred(
+    data, seq_col=DEFAULT_SEQ_COL, container_name="pfred", temp_dir="./pfred_temp_io", chunk_size=5000, model=DEFAULT_MODEL
+):
     """Adds PFRED_SVM / PFRED_PLS columns to ``data`` based on its ``seq_col``.
 
-    Returns the processed dataframe and the list of feature columns added.
+    ``model`` (AOBaseModel) selects the predictor model/params. Returns the processed
+    dataframe and the list of feature columns added.
     """
     df = data.copy()
 
@@ -157,7 +182,7 @@ def populate_pfred(data, seq_col=DEFAULT_SEQ_COL, container_name="pfred", temp_d
         batch = unique_seqs[i : i + chunk_size]
         batch_input = pd.DataFrame({"name": [f"s_{k}" for k in range(len(batch))], "seq": batch})
 
-        batch_res = score_with_pfred_batch(batch_input, container_name, temp_dir)
+        batch_res = score_with_pfred_batch(batch_input, container_name, temp_dir, model=model)
 
         if not batch_res.empty:
             if "antisense_strand__5_3" in batch_res.columns:
@@ -187,30 +212,46 @@ def populate_pfred(data, seq_col=DEFAULT_SEQ_COL, container_name="pfred", temp_d
     return df, feature_cols
 
 
-def score_sequences(seqs, container_name="pfred", temp_dir="./pfred_temp_io", chunk_size=5000):
+def score_sequences(seqs, container_name="pfred", temp_dir="./pfred_temp_io", chunk_size=5000, model=DEFAULT_MODEL):
     """Standalone convenience: score an iterable of sequences.
 
     Returns a DataFrame with columns ``Sequence``, ``PFRED_SVM``, ``PFRED_PLS``.
-    This is the tauso-free entry point used by the smoke test and by callers that
-    just have raw sequences rather than a tauso dataframe.
+    ``model`` (AOBaseModel) selects the predictor model/params. This is the tauso-free
+    entry point used by the smoke test and by callers that just have raw sequences.
     """
     df = pd.DataFrame({DEFAULT_SEQ_COL: list(seqs)})
     out, _ = populate_pfred(
-        df, seq_col=DEFAULT_SEQ_COL, container_name=container_name, temp_dir=temp_dir, chunk_size=chunk_size
+        df, seq_col=DEFAULT_SEQ_COL, container_name=container_name, temp_dir=temp_dir, chunk_size=chunk_size, model=model
     )
     return out[[DEFAULT_SEQ_COL, "PFRED_SVM", "PFRED_PLS"]]
 
 
 if __name__ == "__main__":
-    # Smoke test: requires a running PFRED container (default name "pfred").
+    # CLI smoke test. Examples:
+    #   python integration/pfred_runner.py                     # score the bundled sample_seqs.csv
+    #   python integration/pfred_runner.py my_seqs.csv          # score the "Sequence" column of a CSV
+    #   python integration/pfred_runner.py my_seqs.csv -o scored.csv
+    import argparse
     import sys
 
-    sample_path = os.path.join(os.path.dirname(__file__), "sample_seqs.csv")
-    seqs = pd.read_csv(sample_path)[DEFAULT_SEQ_COL].tolist()
+    default_csv = os.path.join(os.path.dirname(__file__), "sample_seqs.csv")
+    ap = argparse.ArgumentParser(description="Score antisense oligos with PFRED (SVM/PLS).")
+    ap.add_argument("input_csv", nargs="?", default=default_csv,
+                    help=f"CSV with a '{DEFAULT_SEQ_COL}' column (default: bundled sample_seqs.csv)")
+    ap.add_argument("-c", "--column", default=DEFAULT_SEQ_COL, help="sequence column name")
+    ap.add_argument("-o", "--out", help="write scored CSV here instead of printing")
+    ap.add_argument("--container", default="pfred", help="docker container name")
+    args = ap.parse_args()
 
-    if not validate_docker_container(container_name="pfred", verbose=True):
-        print("No running PFRED container — see ../PFRED for build/run steps.")
+    if not validate_docker_container(container_name=args.container, verbose=True):
+        print("No running PFRED container — see ../PFRED and ../REPRODUCE.md for build/run steps.")
         sys.exit(1)
 
-    print(f"Scoring {len(seqs)} sample sequences...")
-    print(score_sequences(seqs).to_string(index=False))
+    seqs = pd.read_csv(args.input_csv)[args.column].tolist()
+    print(f"Scoring {len(seqs)} sequences from {args.input_csv} ...")
+    result = score_sequences(seqs, container_name=args.container)
+    if args.out:
+        result.to_csv(args.out, index=False)
+        print(f"wrote {len(result)} rows to {args.out}")
+    else:
+        print(result.to_string(index=False))

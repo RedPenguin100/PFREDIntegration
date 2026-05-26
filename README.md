@@ -45,6 +45,25 @@ docker run -d -t --name pfred tauso/pfred:v1
 python integration/pfred_runner.py
 ```
 
+## Score sequences (CLI)
+
+The runner doubles as a CLI (needs only `pandas` + a running `pfred` container):
+
+```bash
+# score the bundled sample sequences
+python integration/pfred_runner.py
+
+# score the "Sequence" column of your own CSV, writing results out
+python integration/pfred_runner.py my_seqs.csv -o scored.csv
+
+# other column name / container
+python integration/pfred_runner.py my_seqs.csv -c oligo --container pfred
+```
+
+The AOBase model + its parameters are exposed via the `AOBaseModel` dataclass
+(`score_sequences(..., model=AOBaseModel(params=(...)))`) — defaults reproduce the
+original run.
+
 ## Reproducibility note
 
 A from-scratch `docker build` still pulls from external mirrors (the SL6 obsolete vault,
